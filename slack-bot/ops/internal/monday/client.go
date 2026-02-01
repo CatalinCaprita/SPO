@@ -103,7 +103,7 @@ func (api *ApiClient) GetItemsInAllBoards(ctx context.Context, params ItemsQuery
 		defer close(itemsChan)
 		for resp := range listenChan {
 			if resp.Error != nil {
-				log.Print(fmt.Errorf("failed to query monday: %w", err))
+				log.Printf("failed to query monday: %s", resp.Error)
 			}
 			for _, i := range resp.Items {
 				itemsChan <- i

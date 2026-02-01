@@ -77,6 +77,7 @@ func (item Item) String() string {
 		case "telefon":
 			phone = string(c.Value)
 		}
+		sb.WriteString(fmt.Sprintf("Column ID %s, Title: %s, Type: %s Value: %s\n", c.Column.Id, c.Column.Title, c.Column.Type, c.Value))
 	}
 	sb.WriteString(fmt.Sprintf("(ID: %s, Group: (%s/%s), Name: %s, Email: %s, Phone: %s)\n", item.Id, item.Group.Title, item.Name, name, email, phone))
 	return sb.String()
