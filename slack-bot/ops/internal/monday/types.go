@@ -126,6 +126,7 @@ type ItemsQueryRule struct {
 type ItemsQueryOperator string
 type CompareValue graphql.String
 type ItemsQueryRuleOperator string
+type JSON string
 
 const (
 	ANY_OF                 ItemsQueryRuleOperator = "any_of"
@@ -145,3 +146,19 @@ const (
 	WITHIN_THE_NEXT        ItemsQueryRuleOperator = "within_the_next"
 	WITHIN_THE_LAST        ItemsQueryRuleOperator = "within_the_last"
 )
+
+type CreateItem struct {
+	Id graphql.ID
+}
+type CreateItemMutation struct {
+	CreateItem CreateItem `graphql:"create_item(board_id: $boardId group_id: $groupId item_name: $itemName column_values: $cols)"`
+}
+
+type CreateItemRequest struct {
+	BoardName string
+	GroupName string
+	ItemName  string
+	Name      string
+	Email     string
+	Phone     string
+}

@@ -2,6 +2,7 @@ package monday
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -43,6 +44,20 @@ func (api *ApiClient) ListBoards(ctx context.Context) ([]BoardListing, error) {
 		return nil, fmt.Errorf("failed to query: %w", err)
 	}
 	return simpleBoardsQuery.Boards, nil
+}
+
+func (api *ApiClient) FindBoardByName(ctx context.Context, name string) (*BoardListing, error) {
+	boards, err := api.ListBoards(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("could not list all boards: %w", err)
+	}
+	for _, board := range boards {
+		slog.Debug(fmt.Sprintf("Comparting %s to %s\n", name, board.Name))
+		if strings.EqualFold(string(board.Name), name) {
+			return &board, nil
+		}
+	}
+	return nil, fmt.Errorf("board not found")
 }
 
 func (api *ApiClient) GetBoardWithGroups(ctx context.Context, id string) (*BoardWithGroups, error) {
@@ -140,4 +155,72 @@ func (api *ApiClient) GetItemsInAllBoards(ctx context.Context, params ItemsQuery
 		}
 	}()
 	return itemsChan, nil
+}
+
+func (api *ApiClient) CreateItem(ctx context.Context, req CreateItemRequest) error {
+	board, err := api.FindBoardByName(ctx, req.BoardName)
+	if err != nil {
+		return err
+	}
+	boardId, ok := board.Id.(string)
+	if !ok {
+		return fmt.Errorf("board id cannot be cast to string")
+	}
+	groupId, err := api.getGroupId(ctx, req.GroupName, boardId)
+	if err != nil {
+		return err
+	}
+
+	var columnValuesParam = map[string]string{}
+	for _, col := range board.Columns {
+		switch col.Title {
+		case "Email":
+			columnValuesParam[col.Id.(string)] = req.Email
+		case "Nume":
+			columnValuesParam[col.Id.(string)] = req.Name
+		case "Telefon":
+			columnValuesParam[col.Id.(string)] = req.Phone
+		}
+	}
+
+	encodedCols, err := json.Marshal(columnValuesParam)
+	if err != nil {
+		return fmt.Errorf("failed to encode param values: %w", err)
+	}
+	log.Println(string(encodedCols))
+
+	var mutateRequest = CreateItemMutation{}
+	var variables = map[string]any{
+		"boardId":  graphql.ID(boardId),
+		"groupId":  groupId,
+		"itemName": graphql.String(req.ItemName),
+		"cols":     JSON(encodedCols),
+	}
+	if err := api.client.Mutate(ctx, &mutateRequest, variables); err != nil {
+		return fmt.Errorf("failed to mutate: %w", err)
+	}
+	return nil
+}
+
+func (api *ApiClient) getGroupId(ctx context.Context, groupName string, boardId string) (graphql.String, error) {
+	if groupName == "" {
+		return "", nil
+	}
+	boardWithGroups, err := api.GetBoardWithGroups(ctx, boardId)
+	if err != nil {
+		return "", err
+	}
+	var groupId string = ""
+	for _, group := range boardWithGroups.Groups {
+		if strings.EqualFold(string(group.Title), groupName) {
+			var ok bool
+			groupId, ok = group.Id.(string)
+			if !ok {
+				return "", fmt.Errorf("could not convert group_id to string")
+			}
+			return graphql.String(groupId), nil
+		}
+	}
+	return "", fmt.Errorf("group %s not found in board %s", groupName, boardWithGroups.Name)
+
 }
