@@ -16,6 +16,7 @@ type BoardListing struct {
 	Name        graphql.String
 	Description graphql.String
 	BoardKind   graphql.String `graphql:"board_kind"`
+	Columns     []Column
 }
 
 type Group struct {
@@ -55,6 +56,7 @@ type ColumnValue struct {
 	}
 }
 type Column struct {
+	Id    graphql.ID
 	Title graphql.String
 }
 
@@ -77,9 +79,9 @@ func (item Item) String() string {
 		case "telefon":
 			phone = string(c.Value)
 		}
-		sb.WriteString(fmt.Sprintf("Column ID %s, Title: %s, Type: %s Value: %s\n", c.Column.Id, c.Column.Title, c.Column.Type, c.Value))
+		// sb.WriteString(fmt.Sprintf("Column ID %s, Title: %s, Type: %s Value: %s\n", c.Column.Id, c.Column.Title, c.Column.Type, c.Value))
 	}
-	sb.WriteString(fmt.Sprintf("(ID: %s, Group: (%s/%s), Name: %s, Email: %s, Phone: %s)\n", item.Id, item.Group.Title, item.Name, name, email, phone))
+	sb.WriteString(fmt.Sprintf("Group: '%s/%s', Name: %s, Email: %s, Phone: %s)\n", item.Group.Title, item.Name, name, email, phone))
 	return sb.String()
 }
 
@@ -101,6 +103,18 @@ type BoardByIdWithFilterItemsQuery struct {
 type ItemsQuery struct {
 	Rules    []ItemsQueryRule   `graphql:"rules" json:"rules"`
 	Operator ItemsQueryOperator `graphql:"operator" json:"operator"`
+}
+
+func (q *ItemsQuery) SetRules(rules []ItemsQueryRule) {
+	q.Rules = rules
+}
+
+func (q *ItemsQuery) SetOperator(op ItemsQueryOperator) {
+	q.Operator = op
+}
+
+func (q *ItemsQuery) AddRule(colId graphql.ID, colVar CompareValue, op ItemsQueryRuleOperator) {
+	q.Rules = append(q.Rules, ItemsQueryRule{ColumnId: colId, CompareValue: colVar, Operator: op})
 }
 
 type ItemsQueryRule struct {

@@ -16,8 +16,8 @@ const (
 )
 
 var (
-	column = flag.String("column", "", "Column after which to search")
-	value  = flag.String("value", "", "Value to search in corresponding column")
+	column = flag.String("c", "", "Column after which to search")
+	value  = flag.String("v", "", "Value to search in corresponding column")
 )
 
 func main() {

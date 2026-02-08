@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/shurcooL/graphql"
@@ -31,6 +33,12 @@ func New(url, token string) *ApiClient {
 
 func (api *ApiClient) ListBoards(ctx context.Context) ([]BoardListing, error) {
 	var simpleBoardsQuery = ListBoardsQuery{}
+	select {
+	case <-ctx.Done():
+		log.Println("Context closed")
+		return nil, fmt.Errorf("context closed")
+	default:
+	}
 	if err := api.client.Query(ctx, &simpleBoardsQuery, nil); err != nil {
 		return nil, fmt.Errorf("failed to query: %w", err)
 	}
@@ -85,12 +93,33 @@ func (api *ApiClient) GetItemsInAllBoards(ctx context.Context, params ItemsQuery
 	for _, board := range boards {
 		go func() {
 			defer wg.Done()
-			items, err := api.GetBoardItemsFiltered(ctx, board.Id, 100, params)
+			// for each board, map the column_id to the column title
+			var sb = &strings.Builder{}
+			fmt.Fprintf(sb, "Available columns in board %s\n", board.Name)
+			var columnNameToId = map[string]graphql.ID{}
+			for _, col := range board.Columns {
+				fmt.Fprintf(sb, "%s[%s], ", col.Title, col.Id)
+				columnNameToId[strings.ToLower(string(col.Title))] = col.Id
+			}
+			var innerParams = &ItemsQuery{
+				Rules: []ItemsQueryRule{},
+			}
+			innerParams.SetOperator(params.Operator)
+			for _, rule := range params.Rules {
+				var strId = rule.ColumnId.(string)
+				var colId = columnNameToId[strings.ToLower(strId)]
+				if colId == nil {
+					return
+				}
+				slog.Debug("Replacing %s with %s in board '%s'", rule.ColumnId, colId, board.Name)
+				innerParams.AddRule(colId, rule.CompareValue, rule.Operator)
+			}
+			items, err := api.GetBoardItemsFiltered(ctx, board.Id, 100, *innerParams)
 			if err != nil {
 				listenChan <- Response{Items: nil, Error: err}
 			} else {
 				if len(items) > 0 {
-					log.Printf("Found %d entries in Board: %s\n", len(items), board.Name)
+					slog.Debug("Found %d entries in Board: %s\n", string(len(items)), board.Name)
 					listenChan <- Response{Items: items, Error: nil}
 				}
 			}
@@ -103,13 +132,12 @@ func (api *ApiClient) GetItemsInAllBoards(ctx context.Context, params ItemsQuery
 		defer close(itemsChan)
 		for resp := range listenChan {
 			if resp.Error != nil {
-				log.Printf("failed to query monday: %s", resp.Error)
+				slog.Debug(fmt.Errorf("failed to query monday: %s", resp.Error).Error())
 			}
 			for _, i := range resp.Items {
 				itemsChan <- i
 			}
 		}
 	}()
-	log.Println("Reached end")
 	return itemsChan, nil
 }
