@@ -32,7 +32,30 @@ func New(url, token string) *ApiClient {
 	}
 }
 
-func (api *ApiClient) ListBoards(ctx context.Context) ([]BoardListing, error) {
+func (api *ApiClient) GetContactsWorkspace(ctx context.Context) (*WorkspaceListing, error) {
+	var workspaceQuery = WorkpacesQuery{}
+	select {
+	case <-ctx.Done():
+		log.Println("Context closed")
+		return nil, fmt.Errorf("context closed")
+	default:
+	}
+	if err := api.client.Query(ctx, &workspaceQuery, nil); err != nil {
+		return nil, fmt.Errorf("failed to query: %w", err)
+	}
+	var contactsWs *WorkspaceListing
+	for _, ws := range workspaceQuery.Workspaces {
+		if strings.Contains(string(ws.Name), "Contacts Management") {
+			contactsWs = &ws
+		}
+	}
+	if contactsWs == nil {
+		return nil, fmt.Errorf("could not find 'Contacts Management' workspace")
+	}
+	return contactsWs, nil
+}
+
+func (api *ApiClient) ListBoards(ctx context.Context, ws *WorkspaceListing) ([]BoardListing, error) {
 	var simpleBoardsQuery = ListBoardsQuery{}
 	select {
 	case <-ctx.Done():
@@ -40,14 +63,21 @@ func (api *ApiClient) ListBoards(ctx context.Context) ([]BoardListing, error) {
 		return nil, fmt.Errorf("context closed")
 	default:
 	}
-	if err := api.client.Query(ctx, &simpleBoardsQuery, nil); err != nil {
+	var variables = map[string]any{
+		"wsId": ws.Id,
+	}
+	if err := api.client.Query(ctx, &simpleBoardsQuery, variables); err != nil {
 		return nil, fmt.Errorf("failed to query: %w", err)
 	}
 	return simpleBoardsQuery.Boards, nil
 }
 
 func (api *ApiClient) FindBoardByName(ctx context.Context, name string) (*BoardListing, error) {
-	boards, err := api.ListBoards(ctx)
+	ws, err := api.GetContactsWorkspace(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find workspace %w", err)
+	}
+	boards, err := api.ListBoards(ctx, ws)
 	if err != nil {
 		return nil, fmt.Errorf("could not list all boards: %w", err)
 	}
@@ -93,8 +123,11 @@ func (api *ApiClient) GetItemsInAllBoards(ctx context.Context, params ItemsQuery
 		Items []Item
 		Error error
 	}
-
-	boards, err := api.ListBoards(ctx)
+	ws, err := api.GetContactsWorkspace(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get `Contacts Management` workspace")
+	}
+	boards, err := api.ListBoards(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
@@ -111,30 +144,38 @@ func (api *ApiClient) GetItemsInAllBoards(ctx context.Context, params ItemsQuery
 			// for each board, map the column_id to the column title
 			var sb = &strings.Builder{}
 			fmt.Fprintf(sb, "Available columns in board %s\n", board.Name)
-			var columnNameToId = map[string]graphql.ID{}
+
+			var columnNameToColumn = map[string]*Column{}
+
 			for _, col := range board.Columns {
-				fmt.Fprintf(sb, "%s[%s], ", col.Title, col.Id)
-				columnNameToId[strings.ToLower(string(col.Title))] = col.Id
+				fmt.Fprintf(sb, "%s[%s], %s ", col.Title, col.Id, col)
+				columnNameToColumn[strings.ToLower(string(col.Title))] = &col
 			}
+			// fmt.Println(sb.String(), "\n")
 			var innerParams = &ItemsQuery{
 				Rules: []ItemsQueryRule{},
 			}
 			innerParams.SetOperator(params.Operator)
 			for _, rule := range params.Rules {
 				var strId = rule.ColumnId.(string)
-				var colId = columnNameToId[strings.ToLower(strId)]
-				if colId == nil {
+				column, ok := columnNameToColumn[strings.ToLower(strId)]
+				if !ok {
 					return
 				}
-				slog.Debug("Replacing %s with %s in board '%s'", rule.ColumnId, colId, board.Name)
-				innerParams.AddRule(colId, rule.CompareValue, rule.Operator)
+				var colId = column.Id
+				var operator = rule.Operator
+				if column.Type == "status" {
+					operator = CONTAINS_TERMS
+				}
+				slog.Debug("Replacing name with id", "columnName", rule.ColumnId, "id", colId, "board", board.Name)
+				innerParams.AddRule(colId, rule.CompareValue, operator)
 			}
 			items, err := api.GetBoardItemsFiltered(ctx, board.Id, 100, *innerParams)
 			if err != nil {
 				listenChan <- Response{Items: nil, Error: err}
 			} else {
 				if len(items) > 0 {
-					slog.Debug("Found %d entries in Board: %s\n", string(len(items)), board.Name)
+					slog.Debug(fmt.Sprintf("Found %d entries in Board: %s\n", len(items), board.Name))
 					listenChan <- Response{Items: items, Error: nil}
 				}
 			}
@@ -171,15 +212,13 @@ func (api *ApiClient) CreateItem(ctx context.Context, req CreateItemRequest) err
 		return err
 	}
 
-	var columnValuesParam = map[string]string{}
+	var columnValuesParam = map[string]any{}
 	for _, col := range board.Columns {
 		switch col.Title {
 		case "Email":
-			columnValuesParam[col.Id.(string)] = req.Email
-		case "Nume":
-			columnValuesParam[col.Id.(string)] = req.Name
-		case "Telefon":
-			columnValuesParam[col.Id.(string)] = req.Phone
+			columnValuesParam[col.Id.(string)] = NewEmailColumnValue(req.Email)
+		case "Phone":
+			columnValuesParam[col.Id.(string)] = NewPhoneColumnValue(req.Phone)
 		}
 	}
 
@@ -187,13 +226,13 @@ func (api *ApiClient) CreateItem(ctx context.Context, req CreateItemRequest) err
 	if err != nil {
 		return fmt.Errorf("failed to encode param values: %w", err)
 	}
-	log.Println(string(encodedCols))
+	slog.Debug(string(encodedCols))
 
 	var mutateRequest = CreateItemMutation{}
 	var variables = map[string]any{
 		"boardId":  graphql.ID(boardId),
 		"groupId":  groupId,
-		"itemName": graphql.String(req.ItemName),
+		"itemName": graphql.String(req.Name),
 		"cols":     JSON(encodedCols),
 	}
 	if err := api.client.Mutate(ctx, &mutateRequest, variables); err != nil {

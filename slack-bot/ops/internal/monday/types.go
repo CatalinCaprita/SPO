@@ -7,8 +7,18 @@ import (
 	"github.com/shurcooL/graphql"
 )
 
+type WorkpacesQuery struct {
+	Workspaces []WorkspaceListing
+}
+
+type WorkspaceListing struct {
+	Id   graphql.ID
+	Name graphql.String
+	Kind graphql.String
+}
+
 type ListBoardsQuery struct {
-	Boards []BoardListing `graphql:"boards(workspace_ids: [null])"`
+	Boards []BoardListing `graphql:"boards(workspace_ids: [$wsId])"`
 }
 
 type BoardListing struct {
@@ -45,19 +55,41 @@ type BoardWithGroupsByIdQuery struct {
 	Boards []BoardWithGroups `graphql:"boards(ids: [$ids])"`
 }
 
-type ColumnValue struct {
-	Id     graphql.ID
-	Text   graphql.String
-	Value  graphql.String
-	Column struct {
-		Id    graphql.ID
-		Title graphql.String
-		Type  graphql.String
-	}
+type EmailColumnValue struct {
+	Email graphql.String `json:"email"`
+	Text  graphql.String `json:"text"`
 }
+
+func NewEmailColumnValue(val string) EmailColumnValue {
+	return EmailColumnValue{Email: graphql.String(val), Text: graphql.String(val)}
+}
+
+type PhoneColumnValue struct {
+	Phone graphql.String `json:"phone"`
+	Text  graphql.String `json:"text"`
+}
+
+func NewPhoneColumnValue(val string) PhoneColumnValue {
+	return PhoneColumnValue{Phone: graphql.String(val), Text: graphql.String(val)}
+}
+
+type TextColumnValue struct {
+	Text  graphql.String
+	Value graphql.String
+}
+type ColumnValue struct {
+	Id         graphql.ID
+	Text       graphql.String
+	Value      graphql.String
+	TextValue  TextColumnValue  `graphql:"... on TextValue"`
+	EmailValue EmailColumnValue `graphql:"... on EmailValue"`
+	PhoneValue PhoneColumnValue `graphql:"... on PhoneValue"`
+}
+
 type Column struct {
 	Id    graphql.ID
 	Title graphql.String
+	Type  graphql.String
 }
 
 type Item struct {
@@ -68,21 +100,16 @@ type Item struct {
 }
 
 func (item Item) String() string {
-	var sb = strings.Builder{}
-	var name, email, phone = "", "", ""
+	var email, phone = "", ""
 	for _, c := range item.ColumnValues {
-		switch strings.ToLower(string(c.Column.Title)) {
-		case "nume":
-			name = string(c.Value)
-		case "email":
-			email = string(c.Value)
-		case "telefon":
-			phone = string(c.Value)
+		if c.EmailValue.Email != "" {
+			email = string(c.EmailValue.Email)
 		}
-		// sb.WriteString(fmt.Sprintf("Column ID %s, Title: %s, Type: %s Value: %s\n", c.Column.Id, c.Column.Title, c.Column.Type, c.Value))
+		if c.PhoneValue.Phone != "" {
+			phone = string(c.PhoneValue.Phone)
+		}
 	}
-	sb.WriteString(fmt.Sprintf("Group: '%s/%s', Name: %s, Email: %s, Phone: %s)\n", item.Group.Title, item.Name, name, email, phone))
-	return sb.String()
+	return fmt.Sprintf("Name: %s, Email: %s, Phone: %s\n", item.Name, email, phone)
 }
 
 type ItemsPage struct {
@@ -145,6 +172,10 @@ const (
 	ENDS_WITH              ItemsQueryRuleOperator = "ends_with"
 	WITHIN_THE_NEXT        ItemsQueryRuleOperator = "within_the_next"
 	WITHIN_THE_LAST        ItemsQueryRuleOperator = "within_the_last"
+)
+
+const (
+	COLUMN_TYPE_STATUS string = "status"
 )
 
 type CreateItem struct {
